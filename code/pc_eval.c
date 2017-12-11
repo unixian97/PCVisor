@@ -2,9 +2,9 @@
  *     Filename: pc_eval.c
  *  Description: Source file for packet classification evaluation
  *
- *       Author: Xiang Wang (xiang.wang.s@gmail.com)
- *               Chang Chen (ck-cc@hotmail.com)
- *               Xiaohe Hu (huxioahe10@gmail.com)
+ *       Author: Xiang Wang
+ *               Chang Chen
+ *               Xiaohe Hu
  *
  * Organization: Network Security Laboratory (NSLab),
  *               Research Institute of Information Technology (RIIT),
@@ -28,35 +28,53 @@
 #include <string.h>
 #include <getopt.h>
 #include <unistd.h>
-#include "pc_algo.h"
+#include <assert.h>
 #include "pc_eval.h"
+#include "hs.h"
+#include "tss.h"
 
 #define swap(a, b) \
     do { typeof(a) __tmp = (a); (a) = (b); (b) = __tmp; } while (0)
 
-struct queue_node {
-    struct range r;
-    struct prefix p;
-    STAILQ_ENTRY(queue_node) n;
-};
-
-STAILQ_HEAD(queue_head, queue_node);
-
 static void print_help(void);
 static void parse_args(int argc, char *argv[]);
+static void load_cb_rules(struct rule_set *rs, const char *rf);     // classbench rule format
+static void load_prfx_rules(struct rule_set *rs, const char *rf);   // prefix rule format
 
 static struct {
     char *rule_file;
     char *trace_file;
-    char *method;
+    int algrthm_id;
 } cfg;
+
+
+/* maybe we can use function factory later? */
+static struct {
+    void (*load_rules)(struct rule_set *rs, const char *rf);
+    int (*build)(const struct rule_set *, void *);
+    int (*search)(const struct trace *, const void *);
+    void (*cleanup)(void *);
+} algrthms[ALGO_NUM] = {
+    {
+        load_cb_rules,
+        hs_build,
+        hs_search,
+        hs_cleanup
+    },
+    {
+        load_prfx_rules,
+        tss_build,
+        tss_search,
+        tss_cleanup
+    }
+};
 
 static struct timeval starttime, stoptime;
 
 int main(int argc, char *argv[])
 {
     uint64_t timediff;
-    struct rule_set rs;
+    struct rule_set rs = {NULL, NULL, 0};
     struct trace t;
     void *rt = NULL;
 
@@ -75,22 +93,21 @@ int main(int argc, char *argv[])
         exit(-1);
     }
 
-    load_rules(&rs, cfg.rule_file);
+    algrthms[cfg.algrthm_id].load_rules(&rs, cfg.rule_file);
 
     printf("Building\n");
 
     gettimeofday(&starttime, NULL);
-    if (build(&rs, &rt) != 0) { /* TODO: replace NULL with user data */
+    if (algrthms[cfg.algrthm_id].build(&rs, &rt) != 0) {
         fprintf(stderr, "Building failed\n");
         unload_rules(&rs);
         exit(-1);
     }
     gettimeofday(&stoptime, NULL);
-
     timediff = make_timediff(&starttime, &stoptime);
 
     printf("Building pass\n");
-    printf("Time for building: %lld(us)\n", timediff);
+    printf("Time for building: %ld(us)\n", timediff);
 
     unload_rules(&rs);
 
@@ -98,7 +115,7 @@ int main(int argc, char *argv[])
      * Searching
      */
     if (cfg.trace_file == NULL) {
-        cleanup(&rt); /* TODO: replace NULL with user data */
+        algrthms[cfg.algrthm_id].cleanup(&rt);
         return 0;
     }
 
@@ -107,22 +124,21 @@ int main(int argc, char *argv[])
     printf("Searching\n");
 
     gettimeofday(&starttime, NULL);
-    if (search(&t, &rt) != 0) { /* TODO: replace NULL with user data */
+    if (algrthms[cfg.algrthm_id].search(&t, &rt) != 0) {
         fprintf(stderr, "Searching failed\n");
         unload_trace(&t);
-        cleanup(&rt); /* TODO: replace NULL with user data */
+        algrthms[cfg.algrthm_id].cleanup(&rt);
         exit(-1);
     }
     gettimeofday(&stoptime, NULL);
-
     timediff = make_timediff(&starttime, &stoptime);
 
     printf("Searching pass\n");
-    printf("Time for searching: %lld(us)\n", timediff);
+    printf("Time for searching: %ld(us)\n", timediff);
     printf("Searching speed: %lld(pps)\n", (t.num * 1000000ULL) / timediff);
 
     unload_trace(&t);
-    cleanup(&rt); /* TODO: replace NULL with user data */
+    algrthms[cfg.algrthm_id].cleanup(&rt);
 
     return 0;
 }
@@ -135,6 +151,7 @@ static void print_help(void)
         "  -h, --help         display this help and exit\n"
         "  -r, --rule FILE    specify a rule file for building\n"
         "  -t, --trace FILE   specify a trace file for searching\n"
+        "  -a, --algorithm ID specify an algorithm, 0:HyperSplit, 1:TSS\n"
         "\n";
 
     printf("%s", help);
@@ -144,12 +161,12 @@ static void print_help(void)
 static void parse_args(int argc, char *argv[])
 {
     int option;
-    static const char *optstr = "hr:t:m:";
+    static const char *optstr = "hr:t:a:";
     static struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"rule", required_argument, NULL, 'r'},
         {"trace", required_argument, NULL, 't'},
-        {"method", required_argument, NULL, 'm'},
+        {"algorithm", required_argument, NULL, 'a'},
         {NULL, 0, NULL, 0}
     };
 
@@ -159,16 +176,10 @@ static void parse_args(int argc, char *argv[])
             print_help();
             exit(0);
 
-        case 'm':
-            if (access(optarg, F_OK) == -1) {
-                perror(optarg);
-                exit(-1);
-            } else {
-                if (option == 'm') {
-                    cfg.method = atoi(optarg);
-                }
-                break;
-            }
+        case 'a':
+            cfg.algrthm_id = atoi(optarg);
+            assert(cfg.algrthm_id >= 0 && cfg.algrthm_id < ALGO_NUM);
+            break;
 
         case 'r':
         case 't':
@@ -199,7 +210,7 @@ uint64_t make_timediff(struct timeval *start, struct timeval *stop)
         (1000000ULL * start->tv_sec + start->tv_usec);
 }
 
-void load_rules(struct rule_set *rs, const char *rf)
+static void load_cb_rules(struct rule_set *rs, const char *rf)
 {
     FILE *rule_fp;
     uint32_t src_ip, src_ip_0, src_ip_1, src_ip_2, src_ip_3, src_ip_mask;
@@ -215,8 +226,8 @@ void load_rules(struct rule_set *rs, const char *rf)
         exit(-1);
     }
 
-    rs->rules = calloc(RULE_MAX, sizeof(struct rule));
-    if (rs->rules == NULL) {
+    rs->r_rules = calloc(RULE_MAX, sizeof(*rs->r_rules));
+    if (rs->r_rules == NULL) {
         perror("Cannot allocate memory for rules");
         exit(-1);
     }
@@ -228,7 +239,7 @@ void load_rules(struct rule_set *rs, const char *rf)
             exit(-1);
         }
 
-        if (fscanf(rule_fp, RULE_FMT,
+        if (fscanf(rule_fp, CB_RULE_FMT,
             &src_ip_0, &src_ip_1, &src_ip_2, &src_ip_3, &src_ip_mask,
             &dst_ip_0, &dst_ip_1, &dst_ip_2, &dst_ip_3, &dst_ip_mask,
             &src_port_begin, &src_port_end, &dst_port_begin, &dst_port_end,
@@ -242,48 +253,136 @@ void load_rules(struct rule_set *rs, const char *rf)
             ((src_ip_2 & 0xff) << 8) | (src_ip_3 & 0xff);
         src_ip_mask = src_ip_mask > 32 ? 32 : src_ip_mask;
         src_ip_mask = (uint32_t)(~((1ULL << (32 - src_ip_mask)) - 1));
-        rs->rules[i].dim[DIM_SIP][0].u32 = src_ip & src_ip_mask;
-        rs->rules[i].dim[DIM_SIP][1].u32 = src_ip | (~src_ip_mask);
+        rs->r_rules[i].dim[DIM_SIP][0].u32 = src_ip & src_ip_mask;
+        rs->r_rules[i].dim[DIM_SIP][1].u32 = src_ip | (~src_ip_mask);
 
         /* dst ip */
         dst_ip = ((dst_ip_0 & 0xff) << 24) | ((dst_ip_1 & 0xff) << 16) |
             ((dst_ip_2 & 0xff) << 8) | (dst_ip_3 & 0xff);
         dst_ip_mask = dst_ip_mask > 32 ? 32 : dst_ip_mask;
         dst_ip_mask = (uint32_t)(~((1ULL << (32 - dst_ip_mask)) - 1));
-        rs->rules[i].dim[DIM_DIP][0].u32 = dst_ip & dst_ip_mask;
-        rs->rules[i].dim[DIM_DIP][1].u32 = dst_ip | (~dst_ip_mask);
+        rs->r_rules[i].dim[DIM_DIP][0].u32 = dst_ip & dst_ip_mask;
+        rs->r_rules[i].dim[DIM_DIP][1].u32 = dst_ip | (~dst_ip_mask);
 
         /* src port */
-        rs->rules[i].dim[DIM_SPORT][0].u16 = src_port_begin & 0xffff;
-        rs->rules[i].dim[DIM_SPORT][1].u16 = src_port_end & 0xffff;
-        if (rs->rules[i].dim[DIM_SPORT][0].u16 >
-                rs->rules[i].dim[DIM_SPORT][1].u16) {
-            swap(rs->rules[i].dim[DIM_SPORT][0].u16,
-                    rs->rules[i].dim[DIM_SPORT][1].u16);
+        rs->r_rules[i].dim[DIM_SPORT][0].u16 = src_port_begin & 0xffff;
+        rs->r_rules[i].dim[DIM_SPORT][1].u16 = src_port_end & 0xffff;
+        if (rs->r_rules[i].dim[DIM_SPORT][0].u16 >
+                rs->r_rules[i].dim[DIM_SPORT][1].u16) {
+            swap(rs->r_rules[i].dim[DIM_SPORT][0].u16,
+                    rs->r_rules[i].dim[DIM_SPORT][1].u16);
         }
 
         /* dst port */
-        rs->rules[i].dim[DIM_DPORT][0].u16 = dst_port_begin & 0xffff;
-        rs->rules[i].dim[DIM_DPORT][1].u16 = dst_port_end & 0xffff;
-        if (rs->rules[i].dim[DIM_DPORT][0].u16 >
-                rs->rules[i].dim[DIM_DPORT][1].u16) {
-            swap(rs->rules[i].dim[DIM_DPORT][0].u16,
-                    rs->rules[i].dim[DIM_DPORT][1].u16);
+        rs->r_rules[i].dim[DIM_DPORT][0].u16 = dst_port_begin & 0xffff;
+        rs->r_rules[i].dim[DIM_DPORT][1].u16 = dst_port_end & 0xffff;
+        if (rs->r_rules[i].dim[DIM_DPORT][0].u16 >
+                rs->r_rules[i].dim[DIM_DPORT][1].u16) {
+            swap(rs->r_rules[i].dim[DIM_DPORT][0].u16,
+                    rs->r_rules[i].dim[DIM_DPORT][1].u16);
         }
 
         /* proto */
         if (proto_mask == 0xff) {
-            rs->rules[i].dim[DIM_PROTO][0].u8 = proto & 0xff;
-            rs->rules[i].dim[DIM_PROTO][1].u8 = proto & 0xff;
+            rs->r_rules[i].dim[DIM_PROTO][0].u8 = proto & 0xff;
+            rs->r_rules[i].dim[DIM_PROTO][1].u8 = proto & 0xff;
         } else if (proto_mask == 0) {
-            rs->rules[i].dim[DIM_PROTO][0].u8 = 0;
-            rs->rules[i].dim[DIM_PROTO][1].u8 = 0xff;
+            rs->r_rules[i].dim[DIM_PROTO][0].u8 = 0;
+            rs->r_rules[i].dim[DIM_PROTO][1].u8 = 0xff;
         } else {
             fprintf(stderr, "Protocol mask error: %02x\n", proto_mask);
             exit(-1);
         }
 
-        rs->rules[i].pri = i;
+        rs->r_rules[i].pri = i;
+
+        rs->num++;
+        i++;
+    }
+
+    fclose(rule_fp);
+
+    printf("%d rules loaded\n", rs->num);
+
+    return;
+}
+
+static void load_prfx_rules(struct rule_set *rs, const char *rf)
+{
+    FILE *rule_fp;
+    uint32_t src_ip, src_ip_0, src_ip_1, src_ip_2, src_ip_3, src_ip_mask;
+    uint32_t dst_ip, dst_ip_0, dst_ip_1, dst_ip_2, dst_ip_3, dst_ip_mask;
+    uint32_t src_port, src_port_mask, dst_port, dst_port_mask;
+    uint32_t proto, proto_mask;
+    uint32_t rule_id;
+    unsigned int i = 0;
+
+    printf("Loading rules from %s\n", rf);
+
+    if ((rule_fp = fopen(rf, "r")) == NULL) {
+        fprintf(stderr, "Cannot open file %s", rf);
+        exit(-1);
+    }
+
+    rs->p_rules = calloc(RULE_MAX, sizeof(*rs->p_rules));
+    if (rs->p_rules == NULL) {
+        perror("Cannot allocate memory for rules");
+        exit(-1);
+    }
+    rs->num = 0;
+
+    while (!feof(rule_fp)) {
+        if (i >= RULE_MAX) {
+            fprintf(stderr, "Too many rules\n");
+            exit(-1);
+        }
+
+        if (fscanf(rule_fp, PRFX_RULE_FMT,
+            &src_ip_0, &src_ip_1, &src_ip_2, &src_ip_3, &src_ip_mask,
+            &dst_ip_0, &dst_ip_1, &dst_ip_2, &dst_ip_3, &dst_ip_mask,
+            &src_port, &src_port_mask, &dst_port, &dst_port_mask,
+            &proto, &proto_mask, &rule_id) != 17) {
+            fprintf(stderr, "Illegal rule format\n");
+            exit(-1);
+        }
+
+        /* src ip */
+        src_ip = ((src_ip_0 & 0xff) << 24) | ((src_ip_1 & 0xff) << 16) |
+            ((src_ip_2 & 0xff) << 8) | (src_ip_3 & 0xff);
+        src_ip_mask = src_ip_mask > 32 ? 32 : src_ip_mask;
+        rs->p_rules[i].dim[DIM_SIP].u32 = src_ip & \
+            (uint32_t)(~((1ULL << (32 - src_ip_mask)) - 1));
+        rs->p_rules[i].len[DIM_SIP] = src_ip_mask;
+
+        /* dst ip */
+        dst_ip = ((dst_ip_0 & 0xff) << 24) | ((dst_ip_1 & 0xff) << 16) |
+            ((dst_ip_2 & 0xff) << 8) | (dst_ip_3 & 0xff);
+        dst_ip_mask = dst_ip_mask > 32 ? 32 : dst_ip_mask;
+        rs->p_rules[i].dim[DIM_DIP].u32 = dst_ip & \
+            (uint32_t)(~((1ULL << (32 - dst_ip_mask)) - 1));
+        rs->p_rules[i].len[DIM_DIP] = dst_ip_mask;
+
+        /* src port */
+        rs->p_rules[i].dim[DIM_SPORT].u16 = src_port & 0xffff;
+        rs->p_rules[i].len[DIM_SPORT] = src_port_mask;
+
+        /* dst port */
+        rs->p_rules[i].dim[DIM_DPORT].u16 = dst_port & 0xffff;
+        rs->p_rules[i].len[DIM_DPORT] = dst_port_mask;
+
+        /* proto */
+        if (proto_mask == 0xff) {
+            rs->p_rules[i].dim[DIM_PROTO].u8 = proto & 0xff;
+            rs->p_rules[i].len[DIM_PROTO] = 8;
+        } else if (proto_mask == 0) {
+            rs->p_rules[i].dim[DIM_PROTO].u8 = 0;
+            rs->p_rules[i].len[DIM_PROTO] = 0;
+        } else {
+            fprintf(stderr, "Protocol mask error: %02x\n", proto_mask);
+            exit(-1);
+        }
+
+        rs->p_rules[i].pri = rule_id;
 
         rs->num++;
         i++;
@@ -298,7 +397,8 @@ void load_rules(struct rule_set *rs, const char *rf)
 
 void unload_rules(struct rule_set *rs)
 {
-    free(rs->rules);
+    SAFE_FREE(rs->r_rules);
+    SAFE_FREE(rs->p_rules);
     return;
 }
 
@@ -356,348 +456,3 @@ void unload_trace(struct trace *t)
     free(t->pkts);
     return;
 }
-
-int is_equal(union point *left, union point *right)
-{
-    return left->u128.high == right->u128.high
-        && left->u128.low == right->u128.low;
-}
-
-int is_less(union point *left, union point *right)
-{
-    return left->u128.high < right->u128.high ||
-        (left->u128.high == right->u128.high &&
-         left->u128.low < right->u128.low);
-}
-
-int is_less_equal(union point *left, union point *right)
-{
-    return is_less(left, right) || is_equal(left, right);
-}
-
-int is_greater(union point *left, union point *right)
-{
-    return left->u128.high > right->u128.high ||
-        (left->u128.high == right->u128.high &&
-         left->u128.low > right->u128.low);
-}
-
-int is_greater_equal(union point *left, union point *right)
-{
-    return is_greater(left, right) || is_equal(left, right);
-}
-
-void point_inc(union point *point)
-{
-    point->u128.low++;
-
-    if (point->u128.low == 0) {
-        point->u128.high++;
-    }
-
-    return;
-}
-
-void point_dec(union point *point)
-{
-    point->u128.low--;
-
-    if (point->u128.low == -1) {
-        point->u128.high--;
-    }
-
-    return;
-}
-
-void point_not(union point *out, union point *point)
-{
-    out->u128.high = ~point->u128.high;
-    out->u128.low = ~point->u128.low;
-    return;
-}
-
-void point_and(union point *out, union point *left, union point *right)
-{
-    out->u128.high = left->u128.high & right->u128.high;
-    out->u128.low = left->u128.low & right->u128.low;
-    return;
-}
-
-void point_or(union point *out, union point *left, union point *right)
-{
-    out->u128.high = left->u128.high | right->u128.high;
-    out->u128.low = left->u128.low | right->u128.low;
-    return;
-}
-
-void point_xor(union point *out, union point *left, union point *right)
-{
-    out->u128.high = left->u128.high ^ right->u128.high;
-    out->u128.low = left->u128.low ^ right->u128.low;
-    return;
-}
-
-void point_xnor(union point *out, union point *left, union point *right)
-{
-    out->u128.high = ~(left->u128.high ^ right->u128.high);
-    out->u128.low = ~(left->u128.low ^ right->u128.low);
-    return;
-}
-
-void point_print(union point *point)
-{
-    printf("%016llx%016llx\n", point->u128.high, point->u128.low);
-}
-
-void set_bit(union point *p, unsigned int bit, unsigned int val)
-{
-    if (bit < 64) {
-        if (val != 0) {
-            p->u128.low |= 1ULL << (bit - 64);
-        } else {
-            p->u128.low &= ~(1ULL << (bit - 64));
-        }
-    } else {
-        if (val != 0) {
-            p->u128.high |= 1ULL << (bit - 64);
-        } else {
-            p->u128.high &= ~(1ULL << (bit - 64));
-        }
-    }
-
-    return;
-}
-
-void gen_prefix_mask(union point *p, unsigned int bits,
-        unsigned int mask_len)
-{
-    if (mask_len == 0) {
-        p->u128.high = 0;
-        p->u128.low = 0;
-    } else if (mask_len <= 64) {
-        if (bits < 64) {
-            p->u128.high = 0;
-            p->u128.low = ~((1ULL << (bits - mask_len)) - 1)
-                & ((1ULL << bits) - 1);
-        } else if (bits == 64) {
-            p->u128.high = 0;
-            p->u128.low = ~((1ULL << (64 - mask_len)) - 1);
-        } else {
-            p->u128.high = ~((1ULL << (64 - mask_len)) - 1);
-            p->u128.low = 0;
-        }
-    } else {
-        p->u128.high = -1;
-        p->u128.low = ~((1ULL << (128 - mask_len)) - 1);
-    }
-
-    return;
-}
-
-void gen_suffix_mask(union point *p, unsigned int mask_len)
-{
-    if (mask_len < 64) {
-        p->u128.high = 0;
-        p->u128.low = (1ULL << mask_len) - 1;
-    } else if (mask_len == 64) {
-        p->u128.high = 0;
-        p->u128.low = - 1;
-    } else if (mask_len < 128) {
-        p->u128.high = (1ULL << (mask_len - 64)) - 1;
-        p->u128.low = -1;
-    } else {
-        p->u128.high = -1;
-        p->u128.low = - 1;
-    }
-
-    return;
-}
-
-void range2prefix(struct prefix_head *head, struct range *range,
-        unsigned int bits)
-{
-    union point broad, high, tmp0;
-    struct prefix_node *pn;
-    struct queue_node *node, *node1;
-    struct queue_head queue = STAILQ_HEAD_INITIALIZER(queue);
-
-    STAILQ_INIT(head);
-
-    node = calloc(1, sizeof(*node));
-    if (node == NULL) {
-        perror("out of memory\n");
-        exit(-1);
-    }
-
-    node->r = *range;
-    node->p.value.u128.high = 0;
-    node->p.value.u128.low = 0;
-    node->p.prefix_len = 0;
-
-    STAILQ_INSERT_HEAD(&queue, node, n);
-
-    /* I hate recursive function */
-    while (!STAILQ_EMPTY(&queue)) {
-        node = STAILQ_FIRST(&queue);
-        STAILQ_REMOVE_HEAD(&queue, n);
-
-        gen_suffix_mask(&tmp0, bits - node->p.prefix_len);
-        point_or(&broad, &node->p.value, &tmp0);
-
-        if (is_equal(&node->r.begin, &node->p.value) &&
-            is_equal(&node->r.end, &broad)) {
-
-            pn = calloc(1, sizeof(*pn));
-            if (pn == NULL) {
-                perror("out of memory\n");
-                exit(-1);
-            }
-
-            pn->p = node->p;
-            STAILQ_INSERT_TAIL(head, pn, n);
-            free(node);
-            continue;
-        }
-
-        node->p.prefix_len++;
-
-        high = node->p.value;
-        set_bit(&high, bits - node->p.prefix_len, 1);
-
-        /*
-         * binary cut: case A
-         *                       !
-         * node range     |----| !
-         *                       !
-         * prefix range |--------!--------|
-         *                       !
-         */
-        if (is_less(&node->r.end, &high)) {
-            STAILQ_INSERT_HEAD(&queue, node, n);
-
-        /*
-         * binary cut: case B
-         *                       !
-         * node range            |----|
-         *                       !
-         * prefix range |--------!--------|
-         *                       !
-         */
-        } else if (is_greater_equal(&node->r.begin, &high)) {
-            node->p.value = high;
-            STAILQ_INSERT_HEAD(&queue, node, n);
-
-        /*
-         * binary cut: case C
-         *                       !
-         * node range         |--!--|
-         *                       !
-         * prefix range |--------!--------|
-         *                       !
-         */
-        } else {
-            node1 = calloc(1, sizeof(*node1));
-            if (node1 == NULL) {
-                perror("out of memory\n");
-                exit(-1);
-            }
-
-            /* left part */
-            node1->r.begin = node->r.begin;
-            gen_suffix_mask(&tmp0, bits - node->p.prefix_len);
-            point_or(&node1->r.end, &node->p.value, &tmp0);
-            node1->p.value = node->p.value;
-            node1->p.prefix_len = node->p.prefix_len;
-
-            /* right part */
-            node->r.begin = high;
-            node->p.value = high;
-
-            STAILQ_INSERT_HEAD(&queue, node, n);
-            STAILQ_INSERT_HEAD(&queue, node1, n);
-        }
-    }
-
-    return;
-}
-
-void prefix2range(struct range *range, struct prefix *prefix,
-        unsigned int bits)
-{
-    union point point;
-
-    gen_prefix_mask(&point, bits, prefix->prefix_len);
-    point_and(&range->begin, &prefix->value, &point);
-
-    gen_suffix_mask(&point, bits - prefix->prefix_len);
-    point_or(&range->end, &prefix->value, &point);
-
-    return;
-}
-
-void split_range_rule(struct rule_head *head, struct rule *rule)
-{
-    int i;
-    struct rule_node *node;
-    struct prefix_node *prfx_node;
-    struct prefix_head prfx_head[DIM_MAX];
-    struct prefix_node *prfx_cur[DIM_MAX] = {0};
-    unsigned int bits[DIM_MAX] = {32, 32, 16, 16, 8};
-
-    bzero(prfx_head, sizeof(prfx_head));
-    STAILQ_INIT(head);
-
-    /* range2prefix on each dimension INDEPENDENTLY */
-    for (i = 0; i < DIM_MAX; i++) {
-        range2prefix(&prfx_head[i], (struct range *)&rule->dim[i], bits[i]);
-        prfx_cur[i] = STAILQ_FIRST(&prfx_head[i]);
-    }
-
-    /* CROSS PRODUCT all dimensions */
-    while (1) {
-        node = calloc(1, sizeof(*node));
-        if (node == NULL) {
-            perror("out of memory\n");
-            exit(-1);
-        }
-
-        for (i = 0; i < DIM_MAX; i++) {
-            prefix2range((struct range *)&node->r.dim[i],
-                    &prfx_cur[i]->p, bits[i]);
-        }
-
-        node->r.pri = rule->pri;
-
-        STAILQ_INSERT_TAIL(head, node, n);
-
-        /* calculate the carry from the last dimension */
-        prfx_cur[DIM_PROTO] = STAILQ_NEXT(prfx_cur[DIM_PROTO], n);
-
-        for (i = DIM_PROTO; i > DIM_INV; i--) {
-            if (prfx_cur[i] != NULL) {
-                continue;
-            }
-
-            /* the first dimension is overflow */
-            if (i == DIM_SIP) {
-                goto done;
-            }
-
-            /* carry forward */
-            prfx_cur[i - 1] = STAILQ_NEXT(prfx_cur[i - 1], n);
-            prfx_cur[i] = STAILQ_FIRST(&prfx_head[i]);
-        }
-    }
-
-done:
-    for (i = 0; i < DIM_MAX; i++) {
-        while (!STAILQ_EMPTY(&prfx_head[i])) {
-            prfx_node = STAILQ_FIRST(&prfx_head[i]);
-            STAILQ_REMOVE_HEAD(&prfx_head[i], n);
-            free(prfx_node);
-        }
-    }
-
-    return;
-}
-
