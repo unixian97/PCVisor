@@ -23,7 +23,7 @@
 struct s_node {
     struct rng_rule r;
     struct hs_node *p_tn;
-    STAILQ_ENTRY(node) entry;
+    STAILQ_ENTRY(s_node) entry;
 };
 
 STAILQ_HEAD(s_head, s_node);
