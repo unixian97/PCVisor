@@ -15,8 +15,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/queue.h>
 #include "hs.h"
 #include "utils.h"
+
+/* we need a stack to traverse k-d tree */
+struct s_node {
+    struct rng_rule r;
+    struct hs_node *p_tn;
+    STAILQ_ENTRY(node) entry;
+};
+
+STAILQ_HEAD(s_head, s_node);
 
 struct seg_point {
     union point pnt;
@@ -372,14 +382,125 @@ int hs_build(const struct rule_set *rs, void *userdata)
     }
 }
 
+int hs_insrt_rule(struct rng_rule *p_r, void *userdata)
+{
+    struct hs_node *p_tnode = *(typeof(p_tnode) *)userdata;
+    struct s_node *p_sn = NULL, *p_tmp_sn = NULL;
+    struct s_head *p_sh = malloc(sizeof *p_sh);
+    int i;
+
+    STAILQ_INIT(p_sh);
+    p_sn = calloc(1, sizeof *p_sn);
+    p_sn->r.dim[0][1].u32 = (1UL << 32) - 1;
+    p_sn->r.dim[1][1].u32 = (1UL << 32) - 1;
+    p_sn->r.dim[2][1].u16 = (1U << 16) - 1;
+    p_sn->r.dim[3][1].u16 = (1U << 16) - 1;
+    p_sn->r.dim[4][1].u8 = 255;
+    p_sn->p_tn = p_tnode;
+    STAILQ_INSERT_HEAD(p_sh, p_sn, entry);
+
+    while (!STAILQ_EMPTY(p_sh)) {
+        p_sn = STAILQ_FIRST(p_sh);
+        STAILQ_REMOVE_HEAD(p_sh, entry);
+        while (p_sn->p_tn->d2s != -1) {
+            if (is_less_equal(&p_r->dim[p_sn->p_tn->d2s][1], &p_sn->p_tn->thresh)) {
+                p_sn->r.dim[p_sn->p_tn->d2s][1] = p_sn->p_tn->thresh;
+                p_sn->p_tn = p_sn->p_tn->child[0];
+            } else if (is_less(&p_sn->p_tn->thresh, &p_r->dim[p_sn->p_tn->d2s][0])) {
+                p_sn->r.dim[p_sn->p_tn->d2s][0] = p_sn->p_tn->thresh;
+                point_inc(&p_sn->r.dim[p_sn->p_tn->d2s][0]);
+                p_sn->p_tn = p_sn->p_tn->child[1];
+            } else {
+                p_tmp_sn = malloc(sizeof *p_tmp_sn);
+                p_tmp_sn->p_tn = p_sn->p_tn->child[1];
+                p_tmp_sn->r = p_sn->r;
+                p_tmp_sn->r.dim[p_sn->p_tn->d2s][0] = p_sn->p_tn->thresh;
+                point_inc(&p_tmp_sn->r.dim[p_sn->p_tn->d2s][0]);
+                STAILQ_INSERT_HEAD(p_sh, p_tmp_sn, entry);
+                p_sn->r.dim[p_sn->p_tn->d2s][1] = p_sn->p_tn->thresh;
+                p_sn->p_tn = p_sn->p_tn->child[0];
+            }
+        }
+        if (p_r->pri >= p_sn->p_tn->thresh.u32) {
+            SAFE_FREE(p_sn);
+            continue;
+        }
+        /* in case that p_sn->r is "in" p_r */
+        for (i = 0; i < DIM_MAX; i++) {
+            if (is_greater(&p_r->dim[i][0], &p_sn->r.dim[i][0])) {
+                /* left */
+                p_tnode = calloc(1, sizeof *p_tnode);
+                p_tnode->d2s = -1;
+                p_tnode->depth = p_sn->p_tn->depth + 1;
+                p_tnode->thresh.u32 = p_sn->p_tn->thresh.u32;
+                p_sn->p_tn->child[0] = p_tnode;
+                /* right */
+                p_tnode = calloc(1, sizeof *p_tnode);
+                p_tnode->d2s = -1;
+                p_tnode->depth = p_sn->p_tn->depth + 1;
+                p_tnode->thresh.u32 = p_sn->p_tn->thresh.u32;
+                p_sn->p_tn->child[1] = p_tnode;
+                /* itself */
+                p_sn->p_tn->d2s = i;
+                p_sn->p_tn->thresh = p_r->dim[i][0];
+                point_dec(&p_sn->p_tn->thresh);
+                //printf("d2s:%d; thresh:%u; left_pri:%u\n", i, p_sn->p_tn->thresh.u32, p_tnode->thresh.u32);
+                p_sn->p_tn = p_sn->p_tn->child[1];
+                p_sn->r.dim[i][0] = p_r->dim[i][0];
+            }
+            if (is_less(&p_r->dim[i][1], &p_sn->r.dim[i][1])) {
+                /* right */
+                p_tnode = calloc(1, sizeof *p_tnode);
+                p_tnode->d2s = -1;
+                p_tnode->depth = p_sn->p_tn->depth + 1;
+                p_tnode->thresh.u32 = p_sn->p_tn->thresh.u32;
+                p_sn->p_tn->child[1] = p_tnode;
+                /* left */
+                p_tnode = calloc(1, sizeof *p_tnode);
+                p_tnode->d2s = -1;
+                p_tnode->depth = p_sn->p_tn->depth + 1;
+                p_tnode->thresh.u32 = p_sn->p_tn->thresh.u32;
+                p_sn->p_tn->child[0] = p_tnode;
+                /* itself */
+                p_sn->p_tn->d2s = i;
+                p_sn->p_tn->thresh = p_r->dim[i][1];
+                //printf("d2s:%d; thresh:%u; right_pri:%u\n", i, p_sn->p_tn->thresh.u32, p_tnode->thresh.u32);
+                p_sn->p_tn = p_sn->p_tn->child[0];
+            }
+        }
+        p_sn->p_tn->thresh.u32 = p_r->pri;
+        SAFE_FREE(p_sn);
+    }
+    SAFE_FREE(p_sh);
+    return 0;
+}
+
+
+int hs_insrt_update(const struct rule_set *rs, void *userdata)
+{
+    if (!*(void **) userdata || !rs->r_rules) return -1;
+    int i;
+
+    for (i = 0; i < rs->num; i++) {
+        if (hs_insrt_rule(&rs->r_rules[i], userdata) != 0) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 static int hs_classify(struct packet *pkt, const void *userdata)
 {
     struct hs_node *node = *(typeof(node) *)userdata;
 
     while (node->child[0] != NULL || node->child[1] != NULL) {
+        //printf("d2s:%d; pkt->val[%d].u32:%u; node.thresh.u32:%u\n", node->d2s, node->d2s, pkt->val[node->d2s].u32, node->thresh.u32);
         if (pkt->val[node->d2s].u32 <= node->thresh.u32) {
+            //printf("left\n");
             node = node->child[0];
         } else {
+            //printf("right\n");
             node = node->child[1];
         }
     }
@@ -393,8 +514,8 @@ int hs_search(const struct trace *t, const void *userdata)
 
     for (i = 0; i < t->num; i++) {
         if ((c = hs_classify(&t->pkts[i], userdata)) != t->pkts[i].match) {
-            fprintf(stderr, "pkt[%d] match:%d, classify:%d\n", i+1, t->pkts[i].match+1, c+1);
-            return -1;
+            //fprintf(stderr, "pkt[%d] match:%d, classify:%d\n", i+1, t->pkts[i].match+1, c+1);
+            //return -1;
         }
     }
 

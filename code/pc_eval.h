@@ -29,8 +29,8 @@
 #include <stdint.h>
 #include <sys/time.h>
 
-#define RULE_MAX (1 << 17)  /* 128K */
-#define PKT_MAX (1 << 17)   /* 128K */
+#define RULE_MAX (1 << 19)  /* 512K */
+#define PKT_MAX (1 << 21)   /* 2048K */
 
 #define CACHE_LINE_SIZE 64 /* 64 bytes */
 
@@ -42,7 +42,7 @@
     { if ((ptr) != NULL) { free(ptr); (ptr) = NULL; } }
 
 /* compatible with classbench from wustl */
-#define CB_RULE_FMT "@%u.%u.%u.%u/%u %u.%u.%u.%u/%u %u : %u %u : %u %x/%x\n"
+#define CB_RULE_FMT "@%u.%u.%u.%u/%u %u.%u.%u.%u/%u %u : %u %u : %u %x/%x %u\n"
 /* prefix rule format, the last integer is original rule_id/priority */
 #define PRFX_RULE_FMT "@%u.%u.%u.%u/%u %u.%u.%u.%u/%u %u/%u %u/%u %x/%x %u\n"
 #define PKT_FMT "%u %u %u %u %u %d\n"

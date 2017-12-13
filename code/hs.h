@@ -21,13 +21,14 @@
  * k-d tree
  */
 struct hs_node {
-    uint8_t d2s;
+    int d2s;
     uint8_t depth;
     union point thresh;
     struct hs_node *child[2];
 };
 
 int hs_build(const struct rule_set *rs, void *userdata);
+int hs_insrt_update(const struct rule_set *rs, void *userdata);
 int hs_search(const struct trace *t, const void *userdata);
 void hs_cleanup(void *userdata);
 

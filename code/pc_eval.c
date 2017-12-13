@@ -43,26 +43,35 @@ static void load_prfx_rules(struct rule_set *rs, const char *rf);   // prefix ru
 
 static struct {
     char *rule_file;
+    char *u_rule_file;
     char *trace_file;
     int algrthm_id;
-} cfg;
+} cfg = {
+    NULL,
+    NULL,
+    NULL,
+    0
+};
 
 
 /* maybe we can use function factory later? */
 static struct {
-    void (*load_rules)(struct rule_set *rs, const char *rf);
+    void (*load_rules)(struct rule_set *, const char *);
     int (*build)(const struct rule_set *, void *);
+    int (*insrt_update)(const struct rule_set *, void *);
     int (*search)(const struct trace *, const void *);
     void (*cleanup)(void *);
 } algrthms[ALGO_NUM] = {
     {
         load_cb_rules,
         hs_build,
+        hs_insrt_update,
         hs_search,
         hs_cleanup
     },
     {
         load_prfx_rules,
+        tss_build,
         tss_build,
         tss_search,
         tss_cleanup
@@ -75,6 +84,7 @@ int main(int argc, char *argv[])
 {
     uint64_t timediff;
     struct rule_set rs = {NULL, NULL, 0};
+    struct rule_set u_rs = {NULL, NULL, 0};
     struct trace t;
     void *rt = NULL;
 
@@ -110,6 +120,29 @@ int main(int argc, char *argv[])
     printf("Time for building: %ld(us)\n", timediff);
 
     unload_rules(&rs);
+
+    /*
+     * Updating
+     */
+    if (cfg.u_rule_file != NULL) {
+        printf("Updating\n");
+
+        algrthms[cfg.algrthm_id].load_rules(&u_rs, cfg.u_rule_file);
+
+        gettimeofday(&starttime, NULL);
+        if (algrthms[cfg.algrthm_id].insrt_update(&u_rs, &rt) != 0) {
+            fprintf(stderr, "Updating failed\n");
+            unload_rules(&u_rs);
+            exit(-1);
+        }
+        gettimeofday(&stoptime, NULL);
+        timediff = make_timediff(&starttime, &stoptime);
+
+        printf("Updating pass\n");
+        printf("Time for updating: %ld(us)\n", timediff);
+
+        unload_rules(&u_rs);
+    }
 
     /*
      * Searching
@@ -151,6 +184,7 @@ static void print_help(void)
         "  -h, --help         display this help and exit\n"
         "  -r, --rule FILE    specify a rule file for building\n"
         "  -t, --trace FILE   specify a trace file for searching\n"
+        "  -u, --update FILE  specify a update rule file for searching\n"
         "  -a, --algorithm ID specify an algorithm, 0:HyperSplit, 1:TSS\n"
         "\n";
 
@@ -161,11 +195,12 @@ static void print_help(void)
 static void parse_args(int argc, char *argv[])
 {
     int option;
-    static const char *optstr = "hr:t:a:";
+    static const char *optstr = "hr:t:u:a:";
     static struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"rule", required_argument, NULL, 'r'},
         {"trace", required_argument, NULL, 't'},
+        {"update", required_argument, NULL, 'u'},
         {"algorithm", required_argument, NULL, 'a'},
         {NULL, 0, NULL, 0}
     };
@@ -183,6 +218,7 @@ static void parse_args(int argc, char *argv[])
 
         case 'r':
         case 't':
+        case 'u':
             if (access(optarg, F_OK) == -1) {
                 perror(optarg);
                 exit(-1);
@@ -191,6 +227,8 @@ static void parse_args(int argc, char *argv[])
                     cfg.rule_file = optarg;
                 } else if (option == 't') {
                     cfg.trace_file = optarg;
+                } else if (option == 'u') {
+                    cfg.u_rule_file = optarg;
                 }
                 break;
             }
@@ -217,6 +255,7 @@ static void load_cb_rules(struct rule_set *rs, const char *rf)
     uint32_t dst_ip, dst_ip_0, dst_ip_1, dst_ip_2, dst_ip_3, dst_ip_mask;
     uint32_t src_port_begin, src_port_end, dst_port_begin, dst_port_end;
     uint32_t proto, proto_mask;
+    uint32_t rule_id;
     unsigned int i = 0;
 
     printf("Loading rules from %s\n", rf);
@@ -243,7 +282,7 @@ static void load_cb_rules(struct rule_set *rs, const char *rf)
             &src_ip_0, &src_ip_1, &src_ip_2, &src_ip_3, &src_ip_mask,
             &dst_ip_0, &dst_ip_1, &dst_ip_2, &dst_ip_3, &dst_ip_mask,
             &src_port_begin, &src_port_end, &dst_port_begin, &dst_port_end,
-            &proto, &proto_mask) != 16) {
+            &proto, &proto_mask, &rule_id) != 17) {
             fprintf(stderr, "Illegal rule format\n");
             exit(-1);
         }
@@ -294,7 +333,7 @@ static void load_cb_rules(struct rule_set *rs, const char *rf)
             exit(-1);
         }
 
-        rs->r_rules[i].pri = i;
+        rs->r_rules[i].pri = rule_id - 1;
 
         rs->num++;
         i++;
@@ -382,7 +421,7 @@ static void load_prfx_rules(struct rule_set *rs, const char *rf)
             exit(-1);
         }
 
-        rs->p_rules[i].pri = rule_id;
+        rs->p_rules[i].pri = rule_id - 1;
 
         rs->num++;
         i++;
