@@ -335,6 +335,33 @@ static void cleanup_hs_tree(struct hs_node *node)
     return;
 }
 
+static void printf_stats_nodes()
+{
+    int i;
+
+    /* depth statistics */
+    printf("\nworst_depth = %lu", g_statistics.worst_depth);
+    printf("\naverage_depth = %f", (float)g_statistics.average_depth /
+            g_statistics.leaf_node_num);
+
+    /* node statistics */
+    printf("\ntree_node_num = %lu", g_statistics.tree_node_num);
+    printf("\nleaf_node_num = %lu", g_statistics.leaf_node_num);
+    printf("\ntotal_memory = %lu", (g_statistics.tree_node_num +
+        g_statistics.leaf_node_num) << 3);
+
+    /* node statistics detail */
+    printf("\ndepth   node    intrnl  leaf\n");
+    for (i = 0; i <= g_statistics.worst_depth; i++) {
+        printf("%-8d%-8lu%-8lu%-8lu\n", i, g_statistics.depth_node[i][0] +
+            g_statistics.depth_node[i][1], g_statistics.depth_node[i][0],
+            g_statistics.depth_node[i][1]);
+    }
+    printf("\n");
+
+    return;
+}
+
 int hs_build(const struct rule_set *rs, void *userdata)
 {
     int i;
@@ -354,25 +381,7 @@ int hs_build(const struct rule_set *rs, void *userdata)
         }
         printf("\nsegment_total = %lu", g_statistics.segment_total);
 
-        /* depth statistics */
-        printf("\nworst_depth = %lu", g_statistics.worst_depth);
-        printf("\naverage_depth = %f", (float)g_statistics.average_depth /
-                g_statistics.leaf_node_num);
-
-        /* node statistics */
-        printf("\ntree_node_num = %lu", g_statistics.tree_node_num);
-        printf("\nleaf_node_num = %lu", g_statistics.leaf_node_num);
-        printf("\ntotal_memory = %lu", (g_statistics.tree_node_num +
-            g_statistics.leaf_node_num) << 3);
-
-        /* node statistics detail */
-        printf("\ndepth   node    intrnl  leaf\n");
-        for (i = 0; i <= g_statistics.worst_depth; i++) {
-            printf("%-8d%-8lu%-8lu%-8lu\n", i, g_statistics.depth_node[i][0] +
-                g_statistics.depth_node[i][1], g_statistics.depth_node[i][0],
-                g_statistics.depth_node[i][1]);
-        }
-        printf("\n");
+        printf_stats_nodes();
 
         *(struct hs_node **) userdata = root;
         return 0;
@@ -440,6 +449,16 @@ int hs_insrt_rule(struct rng_rule *p_r, void *userdata)
                 p_tnode->depth = p_sn->p_tn->depth + 1;
                 p_tnode->thresh.u32 = p_sn->p_tn->thresh.u32;
                 p_sn->p_tn->child[1] = p_tnode;
+                /* g_statistics */
+                g_statistics.tree_node_num++;
+                g_statistics.leaf_node_num++;
+                g_statistics.depth_node[p_sn->p_tn->depth][0]++;
+                g_statistics.depth_node[p_sn->p_tn->depth][1]--;
+                g_statistics.depth_node[p_tnode->depth][1] += 2;
+                g_statistics.average_depth += 1 + p_tnode->depth;
+                if (g_statistics.worst_depth < p_tnode->depth) {
+                    g_statistics.worst_depth = p_tnode->depth;
+                }
                 /* itself */
                 p_sn->p_tn->d2s = i;
                 p_sn->p_tn->thresh = p_r->dim[i][0];
@@ -461,6 +480,16 @@ int hs_insrt_rule(struct rng_rule *p_r, void *userdata)
                 p_tnode->depth = p_sn->p_tn->depth + 1;
                 p_tnode->thresh.u32 = p_sn->p_tn->thresh.u32;
                 p_sn->p_tn->child[0] = p_tnode;
+                /* g_statistics */
+                g_statistics.tree_node_num++;
+                g_statistics.leaf_node_num++;
+                g_statistics.depth_node[p_sn->p_tn->depth][0]++;
+                g_statistics.depth_node[p_sn->p_tn->depth][1]--;
+                g_statistics.depth_node[p_tnode->depth][1] += 2;
+                g_statistics.average_depth += 1 + p_tnode->depth;
+                if (g_statistics.worst_depth < p_tnode->depth) {
+                    g_statistics.worst_depth = p_tnode->depth;
+                }
                 /* itself */
                 p_sn->p_tn->d2s = i;
                 p_sn->p_tn->thresh = p_r->dim[i][1];
@@ -486,6 +515,8 @@ int hs_insrt_update(const struct rule_set *rs, void *userdata)
             return -1;
         }
     }
+
+    printf_stats_nodes();
 
     return 0;
 }
@@ -514,8 +545,8 @@ int hs_search(const struct trace *t, const void *userdata)
 
     for (i = 0; i < t->num; i++) {
         if ((c = hs_classify(&t->pkts[i], userdata)) != t->pkts[i].match) {
-            //fprintf(stderr, "pkt[%d] match:%d, classify:%d\n", i+1, t->pkts[i].match+1, c+1);
-            //return -1;
+            fprintf(stderr, "pkt[%d] match:%d, classify:%d\n", i+1, t->pkts[i].match+1, c+1);
+            return -1;
         }
     }
 
