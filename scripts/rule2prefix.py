@@ -40,7 +40,6 @@ def main():
 
     with open('%s' % sys.argv[2] ,'w') as fo:
         for j in xrange(0, len(traces)):
-            # j represents original rule id
             flow = traces[j].split(' ')
             r['begin'] = int(flow[2])
             r['end'] = int(flow[4])
@@ -50,9 +49,19 @@ def main():
             dst_ports = range2prefix(r['begin'], r['end'], W)
             for a in xrange(0, len(src_ports['address'])):
                 for b in range(0, len(dst_ports['address'])):
-                    fo.write('%s %s %s/%s %s/%s %s %d\n' % (
-                        flow[0], flow[1], src_ports['address'][a], src_ports['mask'][a],
-                        dst_ports['address'][b], dst_ports['mask'][b], flow[8][:-1], j))
+                    if len(flow) is 10:
+                        fo.write('%s %s %s/%s %s/%s %s %s\n' % (
+                            flow[0], flow[1], src_ports['address'][a], src_ports['mask'][a],
+                            dst_ports['address'][b], dst_ports['mask'][b], flow[8], flow[9][:-1]))
+                    else:
+                        fo.write('%s %s %s/%s %s/%s %s %s\n' % (
+                            flow[0], flow[1], src_ports['address'][a], src_ports['mask'][a],
+                            dst_ports['address'][b], dst_ports['mask'][b], flow[8][:-1], str(j+1)))
+
+    if len(traces[0].split(' ')) is 9:
+        with open('%s' % sys.argv[1], 'w') as fo:
+            for j in xrange(0, len(traces)):
+                fo.write('%s\n' % (traces[j][:-1] + ' ' + str(j+1)))
 
 
 if __name__ == "__main__":
