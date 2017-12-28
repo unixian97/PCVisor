@@ -12,9 +12,23 @@
 ## how to run
 
 ``` Bash
-$ make clean && make
+# dpdk mode
+$ make -f dpdk.mk
+# HyperSplit on forwarding server
+$ ./build/fwd -l 0-1 -- -q 4 -p 3 -r test/rules/acl1_10K -a 0
+# TSS on forwarding server
+$ ./build/fwd -l 0-1 -- -q 4 -p 3 -r test/p_rules/acl1_10K -a 1
+# flowgen on generator server
+$ ./flowgen -r 10000 -t acl1_10K_trace
+# clean
+$ make clean -f dpdk.mk
+
+# memory simulation mode
+$ make all -f mem.mk
 # HyperSplit
 $ ./build/pc_algo -a 0 -r test/rules/fw1_10K -t test/traces/fw1_10K_trace
 # TSS
 $ ./build/pc_algo -a 1 -r test/p_rules/fw1_10K -t test/traces/fw1_10K_trace
+# clean
+$ make clean -f mem.mk
 ```
