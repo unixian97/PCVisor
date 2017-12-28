@@ -12,14 +12,17 @@
 ## how to run
 
 ``` Bash
+# preprocess test rules
+$ cd scripts && ./convert_rules.sh
+
 # dpdk mode
 $ make -f dpdk.mk
 # HyperSplit on forwarding server
-$ ./build/fwd -l 0-1 -- -q 4 -p 3 -r test/rules/acl1_10K -a 0
+$ sudo ./build/fwd -l 0-1 -- -q 4 -p 3 -r test/rules/acl1_10K -a 0
 # TSS on forwarding server
-$ ./build/fwd -l 0-1 -- -q 4 -p 3 -r test/p_rules/acl1_10K -a 1
+$ sudo ./build/fwd -l 0-1 -- -q 4 -p 3 -r test/p_rules/acl1_10K -a 1
 # flowgen on generator server
-$ ./flowgen -r 10000 -t acl1_10K_trace
+$ sudo ./flowgen -r 10000 -t acl1_10K_trace
 # clean
 $ make clean -f dpdk.mk
 
