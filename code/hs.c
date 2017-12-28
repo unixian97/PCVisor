@@ -521,7 +521,7 @@ int hs_insrt_update(const struct rule_set *rs, void *userdata)
     return 0;
 }
 
-static int hs_classify(struct packet *pkt, const void *userdata)
+int hs_classify(const struct packet *pkt, const void *userdata)
 {
     struct hs_node *node = *(typeof(node) *)userdata;
 

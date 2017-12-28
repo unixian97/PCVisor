@@ -29,6 +29,7 @@ struct hs_node {
 
 int hs_build(const struct rule_set *rs, void *userdata);
 int hs_insrt_update(const struct rule_set *rs, void *userdata);
+int hs_classify(const struct packet *pkt, const void *userdata);
 int hs_search(const struct trace *t, const void *userdata);
 void hs_cleanup(void *userdata);
 

@@ -36,6 +36,7 @@ TAILQ_HEAD(tss_head, tss_node);
 
 void sort_tss_list(struct tss_head *p_th, struct tss_node *p_l_tn, struct tss_node *p_r_tn);
 int tss_build(const struct rule_set *rs, void *userdata);
+int tss_classify(const struct packet *pkt, const void *userdata);
 int tss_search(const struct trace *t, const void *userdata);
 void tss_cleanup(void *userdata);
 

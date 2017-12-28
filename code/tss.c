@@ -29,7 +29,7 @@ static int tpl_is_equal(int *t1, int *t2, int num)
 }
 
 
-static char *create_key(int key_bytes, union point *dim, int *tuple)
+static char *create_key(int key_bytes, const union point *dim, int *tuple)
 {
     int j, offset = 0;
     union point p;
@@ -177,7 +177,7 @@ int tss_build(const struct rule_set *rs, void *userdata)
     return 0;
 }
 
-static int tss_classify(struct packet *pkt, const void *userdata)
+int tss_classify(const struct packet *pkt, const void *userdata)
 {
     struct tss_head *p_th = *(typeof(p_th) *) userdata;
     struct tss_node *p_trav_tn = NULL;

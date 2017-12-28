@@ -47,7 +47,12 @@
 #define PRFX_RULE_FMT "@%u.%u.%u.%u/%u %u.%u.%u.%u/%u %u/%u %u/%u %x/%x %u\n"
 #define PKT_FMT "%u %u %u %u %u %d\n"
 
-#define ALGO_NUM 2
+enum {
+    ALGO_INV = -1,
+    ALGO_HS = 0,
+    ALGO_TSS = 1,
+    ALGO_NUM = 2
+};
 
 enum {
     DIM_INV = -1,
@@ -96,9 +101,21 @@ struct trace {
     int num;
 };
 
+struct algo_t {
+    void (*load_rules)(struct rule_set *, const char *);
+    int (*build)(const struct rule_set *, void *);
+    int (*insrt_update)(const struct rule_set *, void *);
+    int (*classify)(const struct packet *, const void *);
+    int (*search)(const struct trace *, const void *);
+    void (*cleanup)(void *);
+};
+
+extern struct algo_t algrthms[ALGO_NUM];
+
 uint64_t make_timediff(struct timeval *start, struct timeval *stop);
 
-void load_rules(struct rule_set *rs, const char *rf);
+void load_cb_rules(struct rule_set *rs, const char *rf);     // classbench rule format
+void load_prfx_rules(struct rule_set *rs, const char *rf);   // prefix rule format
 void unload_rules(struct rule_set *rs);
 
 void load_trace(struct trace *t, const char *tf);
